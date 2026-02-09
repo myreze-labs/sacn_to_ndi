@@ -3,22 +3,22 @@ Web Server Module
 
 Provides a FastAPI-based web UI and API for monitoring and controlling
 the sACN to NDI bridge.
-"""
 
-from __future__ import annotations
+NOTE: We intentionally do NOT use `from __future__ import annotations`
+here because FastAPI needs runtime access to type annotations for
+request body parsing and dependency injection.
+"""
 
 import asyncio
 import json
 import logging
 import time
+import traceback
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable
+from typing import Any, Callable
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
 from fastapi.responses import HTMLResponse, JSONResponse
-
-if TYPE_CHECKING:
-    from main import SACNtoNDIBridge
 
 logger = logging.getLogger(__name__)
 
@@ -43,9 +43,9 @@ class BridgeWebServer:
             title="sACN to NDI Bridge",
             version="0.1.0",
         )
-        self._bridge: SACNtoNDIBridge | None = None
-        self._bridge_factory: Callable[..., SACNtoNDIBridge] | None = None
-        self._ws_clients: list[WebSocket] = []
+        self._bridge = None  # SACNtoNDIBridge
+        self._bridge_factory = None  # Callable
+        self._ws_clients: list = []
 
         self._setup_routes()
 
@@ -54,13 +54,11 @@ class BridgeWebServer:
         """Get the FastAPI application instance."""
         return self._app
 
-    def set_bridge(self, bridge: SACNtoNDIBridge) -> None:
+    def set_bridge(self, bridge: Any) -> None:
         """Set the bridge instance to monitor/control."""
         self._bridge = bridge
 
-    def set_bridge_factory(
-        self, factory: Callable[..., SACNtoNDIBridge]
-    ) -> None:
+    def set_bridge_factory(self, factory: Callable) -> None:
         """Set factory callable for creating bridges from config."""
         self._bridge_factory = factory
 
@@ -72,7 +70,13 @@ class BridgeWebServer:
             html_path = (
                 Path(__file__).parent / "static" / "index.html"
             )
-            return HTMLResponse(content=html_path.read_text())
+            if not html_path.exists():
+                return HTMLResponse(
+                    content="<h1>Error: static/index.html not found</h1>"
+                    f"<p>Looked at: {html_path}</p>",
+                    status_code=500,
+                )
+            return HTMLResponse(content=html_path.read_text(encoding="utf-8"))
 
         @self._app.get("/api/status")
         async def get_status() -> JSONResponse:
@@ -80,7 +84,12 @@ class BridgeWebServer:
                 return JSONResponse(
                     {"running": False, "error": "No bridge configured"}
                 )
-            return JSONResponse(self._bridge.get_stats())
+            try:
+                return JSONResponse(self._bridge.get_stats())
+            except Exception as exc:
+                return JSONResponse(
+                    {"error": f"Stats error: {exc}"}, status_code=500
+                )
 
         @self._app.get("/api/dmx")
         async def get_dmx_all() -> JSONResponse:
@@ -141,9 +150,7 @@ class BridgeWebServer:
                 )
 
         @self._app.post("/api/config")
-        async def update_config(
-            new_config: dict[str, Any],
-        ) -> JSONResponse:
+        async def update_config(request: Request) -> JSONResponse:
             """Update bridge config. Stops/restarts as needed."""
             if (
                 self._bridge is None
@@ -152,6 +159,14 @@ class BridgeWebServer:
                 return JSONResponse(
                     {"error": "No bridge or factory configured"},
                     status_code=503,
+                )
+
+            try:
+                new_config = await request.json()
+            except Exception as exc:
+                return JSONResponse(
+                    {"error": f"Invalid JSON body: {exc}"},
+                    status_code=400,
                 )
 
             from main import BridgeConfig, EncodingMode
@@ -229,13 +244,19 @@ class BridgeWebServer:
             try:
                 while True:
                     if self._bridge is not None:
-                        payload = {
-                            "type": "dmx",
-                            "ts": time.time(),
-                            "dmx": self._bridge.get_dmx_snapshot(),
-                            "stats": self._bridge.get_stats(),
-                        }
-                        await ws.send_text(json.dumps(payload))
+                        try:
+                            payload = {
+                                "type": "dmx",
+                                "ts": time.time(),
+                                "dmx": self._bridge.get_dmx_snapshot(),
+                                "stats": self._bridge.get_stats(),
+                            }
+                            await ws.send_text(json.dumps(payload))
+                        except Exception:
+                            logger.error(
+                                "Error building WS payload:\n%s",
+                                traceback.format_exc(),
+                            )
                     await asyncio.sleep(0.1)
             except WebSocketDisconnect:
                 pass

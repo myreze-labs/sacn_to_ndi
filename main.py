@@ -384,7 +384,7 @@ def main() -> int:
                 server.app,
                 host=args.web_host,
                 port=args.web_port,
-                log_level="warning",
+                log_level="info",
             )
         except KeyboardInterrupt:
             pass
