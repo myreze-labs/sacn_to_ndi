@@ -23,6 +23,9 @@ class NDISenderConfig:
     source_name: str
     frame_rate: int = 30
     clock_video: bool = True  # Use NDI's internal frame timing
+    width: int = 512           # Initial frame width
+    height: int = 1            # Initial frame height
+    fourcc: str = "RGBA"       # Pixel format: RGBA, BGRX, BGRA
 
 
 class NDISenderProtocol(ABC):
@@ -83,11 +86,6 @@ class CyndilibNDISender(NDISenderProtocol):
         self._running = False
         self._lock = threading.Lock()
 
-        # Cache last frame config to avoid unnecessary reconfiguration
-        self._last_width = 0
-        self._last_height = 0
-        self._last_fourcc = None
-
     def start(self) -> None:
         """Initialize and start the NDI sender."""
         if self._running:
@@ -99,21 +97,33 @@ class CyndilibNDISender(NDISenderProtocol):
         from cyndilib.sender import Sender
         from cyndilib.video_frame import VideoSendFrame
 
-        self._fourcc_enum = FourCC
+        # Map fourcc string to cyndilib enum
+        fourcc_map = {
+            "BGRX": FourCC.BGRX,
+            "BGRA": FourCC.BGRA,
+            "RGBA": FourCC.RGBA,
+            "RGBX": FourCC.RGBX,
+            "UYVY": FourCC.UYVY,
+        }
+        fourcc = fourcc_map.get(self._config.fourcc)
+        if fourcc is None:
+            raise ValueError(
+                f"Unsupported FourCC: {self._config.fourcc}"
+            )
 
         # 1. Create sender (not yet open)
         self._sender = Sender(self._config.source_name)
 
         # 2. Create and configure video frame BEFORE open
+        #    cyndilib does not allow altering the frame after sender.open()
         self._video_frame = VideoSendFrame()
-        self._video_frame.set_fourcc(FourCC.BGRX)
-        self._video_frame.set_resolution(512, 1)
+        self._video_frame.set_fourcc(fourcc)
+        self._video_frame.set_resolution(
+            self._config.width, self._config.height
+        )
         self._video_frame.set_frame_rate(
             Fraction(self._config.frame_rate, 1)
         )
-        self._last_width = 512
-        self._last_height = 1
-        self._last_fourcc = FourCC.BGRX
 
         # 3. Attach frame to sender (required before open)
         self._sender.set_video_frame(self._video_frame)
@@ -136,14 +146,13 @@ class CyndilibNDISender(NDISenderProtocol):
             self._video_frame = None
             self._running = False
 
-            # Reset frame config cache
-            self._last_width = 0
-            self._last_height = 0
-            self._last_fourcc = None
-
     def send_video_frame(self, frame: EncodedFrame) -> None:
         """
         Send a video frame over NDI.
+
+        The frame dimensions and format MUST match what was configured
+        in NDISenderConfig. cyndilib does not allow altering the frame
+        after the sender is opened.
 
         Args:
             frame: EncodedFrame with numpy array data and dimensions
@@ -154,37 +163,6 @@ class CyndilibNDISender(NDISenderProtocol):
         with self._lock:
             if self._video_frame is None or self._sender is None:
                 return
-
-            # Map fourcc string to cyndilib FourCC enum
-            fourcc_map = {
-                "BGRX": self._fourcc_enum.BGRX,
-                "BGRA": self._fourcc_enum.BGRA,
-                "UYVY": self._fourcc_enum.UYVY,
-                "RGBA": self._fourcc_enum.RGBA,
-                "RGBX": self._fourcc_enum.RGBX,
-            }
-
-            fourcc = fourcc_map.get(frame.fourcc)
-            if fourcc is None:
-                raise ValueError(f"Unsupported FourCC: {frame.fourcc}")
-
-            # Only reconfigure if dimensions or format changed
-            if (
-                frame.width != self._last_width
-                or frame.height != self._last_height
-                or fourcc != self._last_fourcc
-            ):
-                from fractions import Fraction
-                self._video_frame.set_fourcc(fourcc)
-                self._video_frame.set_resolution(
-                    frame.width, frame.height
-                )
-                self._video_frame.set_frame_rate(
-                    Fraction(self._config.frame_rate, 1)
-                )
-                self._last_width = frame.width
-                self._last_height = frame.height
-                self._last_fourcc = fourcc
 
             # write_data expects a flat 1-D uint8 array
             flat_data = frame.data.ravel()

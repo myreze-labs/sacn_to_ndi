@@ -80,10 +80,13 @@ class SACNtoNDIBridge:
             fourcc=config.ndi_fourcc,
         )
         
-        # Initialize sender
+        # Initialize sender with the configured resolution and format
         sender_config = NDISenderConfig(
             source_name=config.ndi_source_name,
             frame_rate=config.frame_rate,
+            width=config.ndi_width,
+            height=config.ndi_height,
+            fourcc=config.ndi_fourcc,
         )
         
         if config.use_mock_ndi:
