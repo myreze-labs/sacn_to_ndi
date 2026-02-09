@@ -1,0 +1,947 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>sACN → NDI Bridge</title>
+<style>
+  :root {
+    --bg-primary: #0f1117;
+    --bg-secondary: #1a1d27;
+    --bg-tertiary: #242836;
+    --bg-hover: #2d3244;
+    --border: #333848;
+    --text-primary: #e4e6ed;
+    --text-secondary: #9ca0ad;
+    --text-muted: #6b7084;
+    --accent: #6c8cff;
+    --accent-dim: #4a62b3;
+    --green: #4ade80;
+    --green-dim: #166534;
+    --red: #f87171;
+    --red-dim: #7f1d1d;
+    --yellow: #facc15;
+    --yellow-dim: #713f12;
+    --orange: #fb923c;
+    --font-mono: 'SF Mono', 'Fira Code', 'JetBrains Mono', monospace;
+    --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+    --radius: 8px;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: var(--font-sans);
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* ── Top Bar ── */
+  .topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 24px;
+    background: var(--bg-secondary);
+    border-bottom: 1px solid var(--border);
+    position: sticky;
+    top: 0;
+    z-index: 100;
+  }
+  .topbar-left { display: flex; align-items: center; gap: 16px; }
+  .topbar h1 {
+    font-size: 16px;
+    font-weight: 600;
+    letter-spacing: -0.3px;
+  }
+  .topbar h1 span { color: var(--accent); }
+  .topbar-right { display: flex; align-items: center; gap: 12px; }
+
+  /* ── Badges ── */
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    border-radius: 100px;
+    font-size: 12px;
+    font-weight: 500;
+    font-family: var(--font-mono);
+  }
+  .badge-dot {
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .badge-green { background: var(--green-dim); color: var(--green); }
+  .badge-green .badge-dot { background: var(--green); box-shadow: 0 0 6px var(--green); }
+  .badge-red { background: var(--red-dim); color: var(--red); }
+  .badge-red .badge-dot { background: var(--red); }
+  .badge-yellow { background: var(--yellow-dim); color: var(--yellow); }
+  .badge-yellow .badge-dot { background: var(--yellow); }
+
+  /* ── Layout ── */
+  .layout {
+    display: grid;
+    grid-template-columns: 340px 1fr;
+    gap: 0;
+    min-height: calc(100vh - 49px);
+  }
+  @media (max-width: 900px) {
+    .layout { grid-template-columns: 1fr; }
+  }
+
+  /* ── Sidebar ── */
+  .sidebar {
+    background: var(--bg-secondary);
+    border-right: 1px solid var(--border);
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+    overflow-y: auto;
+  }
+
+  /* ── Cards ── */
+  .card {
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+  }
+  .card-header {
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .card-header h2 {
+    font-size: 13px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-secondary);
+  }
+  .card-body { padding: 16px; }
+
+  /* ── Status rows ── */
+  .stat-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 0;
+    border-bottom: 1px solid var(--border);
+    font-size: 13px;
+  }
+  .stat-row:last-child { border-bottom: none; }
+  .stat-label { color: var(--text-secondary); }
+  .stat-value { font-family: var(--font-mono); font-weight: 500; }
+
+  /* ── Buttons ── */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 8px 16px;
+    border-radius: var(--radius);
+    border: 1px solid var(--border);
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.15s;
+    font-family: var(--font-sans);
+  }
+  .btn:hover { background: var(--bg-hover); }
+  .btn:active { transform: scale(0.98); }
+  .btn-primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .btn-primary:hover { background: var(--accent-dim); }
+  .btn-danger { background: var(--red-dim); border-color: transparent; color: var(--red); }
+  .btn-danger:hover { background: #991b1b; }
+  .btn-group { display: flex; gap: 8px; }
+  .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  /* ── Form controls ── */
+  .form-group {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-bottom: 12px;
+  }
+  .form-group:last-child { margin-bottom: 0; }
+  .form-label {
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+  }
+  .form-input, .form-select {
+    padding: 8px 12px;
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text-primary);
+    font-size: 13px;
+    font-family: var(--font-mono);
+    outline: none;
+    transition: border-color 0.15s;
+  }
+  .form-input:focus, .form-select:focus { border-color: var(--accent); }
+  .form-select { cursor: pointer; }
+
+  /* ── Main content ── */
+  .main-content { padding: 20px; display: flex; flex-direction: column; gap: 20px; }
+
+  /* ── Universe tabs ── */
+  .universe-tabs {
+    display: flex;
+    gap: 4px;
+    padding: 4px;
+    background: var(--bg-secondary);
+    border-radius: var(--radius);
+    width: fit-content;
+  }
+  .universe-tab {
+    padding: 6px 16px;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    color: var(--text-secondary);
+    background: transparent;
+    border: none;
+    font-family: var(--font-sans);
+    transition: all 0.15s;
+  }
+  .universe-tab:hover { color: var(--text-primary); background: var(--bg-tertiary); }
+  .universe-tab.active { color: var(--text-primary); background: var(--accent); }
+
+  /* ── DMX Grid ── */
+  .dmx-grid-wrapper {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+    flex: 1;
+    min-height: 0;
+  }
+  .dmx-grid-header {
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .dmx-grid-header h2 {
+    font-size: 13px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-secondary);
+  }
+  .dmx-grid-body {
+    padding: 12px;
+    overflow-y: auto;
+    max-height: calc(100vh - 240px);
+  }
+
+  /* ── Channel bars ── */
+  .channel-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(28px, 1fr));
+    gap: 2px;
+  }
+  .channel-bar {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    cursor: default;
+    position: relative;
+  }
+  .channel-bar-track {
+    width: 100%;
+    height: 60px;
+    background: var(--bg-primary);
+    border-radius: 3px;
+    position: relative;
+    overflow: hidden;
+  }
+  .channel-bar-fill {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    background: var(--accent);
+    border-radius: 3px;
+    transition: height 0.08s linear;
+    min-height: 1px;
+  }
+  .channel-bar-fill.active { background: var(--green); }
+  .channel-bar-fill.hot { background: var(--orange); }
+  .channel-bar-fill.full { background: var(--red); }
+  .channel-num {
+    font-size: 8px;
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+  }
+
+  /* ── Channel detail tooltip ── */
+  .channel-tooltip {
+    display: none;
+    position: fixed;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 8px 12px;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    z-index: 200;
+    pointer-events: none;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+  }
+  .channel-tooltip.visible { display: block; }
+
+  /* ── View modes ── */
+  .view-toggle {
+    display: flex;
+    gap: 4px;
+    padding: 3px;
+    background: var(--bg-primary);
+    border-radius: 6px;
+  }
+  .view-btn {
+    padding: 4px 10px;
+    border: none;
+    border-radius: 4px;
+    background: transparent;
+    color: var(--text-secondary);
+    font-size: 12px;
+    cursor: pointer;
+    font-family: var(--font-sans);
+  }
+  .view-btn.active { background: var(--bg-tertiary); color: var(--text-primary); }
+
+  /* ── Log ── */
+  .log-panel {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    max-height: 180px;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+  .log-header {
+    padding: 8px 16px;
+    border-bottom: 1px solid var(--border);
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .log-body {
+    padding: 8px 12px;
+    overflow-y: auto;
+    flex: 1;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-secondary);
+    line-height: 1.6;
+  }
+  .log-entry-error { color: var(--red); }
+  .log-entry-warn { color: var(--yellow); }
+  .log-entry-ok { color: var(--green); }
+
+  /* ── Checkbox toggle ── */
+  .toggle-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 6px 0;
+  }
+  .toggle-label { font-size: 13px; color: var(--text-secondary); }
+  .toggle-switch {
+    position: relative;
+    width: 36px;
+    height: 20px;
+  }
+  .toggle-switch input { opacity: 0; width: 0; height: 0; }
+  .toggle-slider {
+    position: absolute;
+    inset: 0;
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    cursor: pointer;
+    transition: 0.2s;
+  }
+  .toggle-slider::before {
+    content: "";
+    position: absolute;
+    width: 14px; height: 14px;
+    left: 2px; top: 2px;
+    background: var(--text-secondary);
+    border-radius: 50%;
+    transition: 0.2s;
+  }
+  .toggle-switch input:checked + .toggle-slider { background: var(--accent); border-color: var(--accent); }
+  .toggle-switch input:checked + .toggle-slider::before { transform: translateX(16px); background: #fff; }
+
+  /* ── WS status dot ── */
+  .ws-dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: var(--red);
+    transition: background 0.3s;
+  }
+  .ws-dot.connected { background: var(--green); box-shadow: 0 0 6px var(--green); }
+</style>
+</head>
+<body>
+
+<!-- Top Bar -->
+<div class="topbar">
+  <div class="topbar-left">
+    <h1>sACN <span>→</span> NDI</h1>
+    <div id="bridgeBadge" class="badge badge-red">
+      <span class="badge-dot"></span>
+      <span id="bridgeBadgeText">Stopped</span>
+    </div>
+  </div>
+  <div class="topbar-right">
+    <div class="ws-dot" id="wsDot" title="WebSocket disconnected"></div>
+    <div id="sacnBadge" class="badge badge-red">
+      <span class="badge-dot"></span>
+      sACN: <span id="sacnBadgeText">No data</span>
+    </div>
+    <div id="ndiBadge" class="badge badge-red">
+      <span class="badge-dot"></span>
+      NDI: <span id="ndiBadgeText">Off</span>
+    </div>
+  </div>
+</div>
+
+<!-- Main Layout -->
+<div class="layout">
+
+  <!-- Sidebar -->
+  <div class="sidebar">
+
+    <!-- Controls -->
+    <div class="card">
+      <div class="card-header"><h2>Bridge Control</h2></div>
+      <div class="card-body">
+        <div class="btn-group" style="margin-bottom: 16px">
+          <button class="btn btn-primary" id="btnStart" onclick="startBridge()">Start</button>
+          <button class="btn btn-danger" id="btnStop" onclick="stopBridge()" disabled>Stop</button>
+        </div>
+        <div class="stat-row">
+          <span class="stat-label">Uptime</span>
+          <span class="stat-value" id="statUptime">—</span>
+        </div>
+        <div class="stat-row">
+          <span class="stat-label">Frames sent</span>
+          <span class="stat-value" id="statFrames">—</span>
+        </div>
+        <div class="stat-row">
+          <span class="stat-label">NDI receivers</span>
+          <span class="stat-value" id="statNdiConn">—</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Configuration -->
+    <div class="card">
+      <div class="card-header">
+        <h2>Configuration</h2>
+        <button class="btn" id="btnApply" onclick="applyConfig()" style="padding: 4px 10px; font-size: 12px;">Apply</button>
+      </div>
+      <div class="card-body">
+        <div class="form-group">
+          <label class="form-label">NDI Source Name</label>
+          <input type="text" class="form-input" id="cfgName" value="sACN Universe 1">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Universes (comma-separated)</label>
+          <input type="text" class="form-input" id="cfgUniverses" value="1" placeholder="1, 2, 3">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Frame Rate</label>
+          <input type="number" class="form-input" id="cfgFps" value="30" min="1" max="120">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Encoding Mode</label>
+          <select class="form-select" id="cfgEncoding">
+            <option value="video" selected>Video Frame</option>
+            <option value="metadata">Metadata (XML)</option>
+            <option value="both">Both</option>
+          </select>
+        </div>
+        <div class="toggle-row">
+          <span class="toggle-label">Multicast</span>
+          <label class="toggle-switch">
+            <input type="checkbox" id="cfgMulticast" checked>
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+        <div class="toggle-row">
+          <span class="toggle-label">Mock NDI (no SDK)</span>
+          <label class="toggle-switch">
+            <input type="checkbox" id="cfgMock">
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+      </div>
+    </div>
+
+    <!-- Per-universe sACN status -->
+    <div class="card">
+      <div class="card-header"><h2>sACN Receive Status</h2></div>
+      <div class="card-body" id="sacnStatusBody">
+        <p style="color: var(--text-muted); font-size: 13px;">Waiting for data...</p>
+      </div>
+    </div>
+
+    <!-- Event Log -->
+    <div class="log-panel">
+      <div class="log-header">
+        Log
+        <button class="btn" style="padding:2px 8px; font-size:11px;" onclick="clearLog()">Clear</button>
+      </div>
+      <div class="log-body" id="logBody"></div>
+    </div>
+  </div>
+
+  <!-- Main Content Area -->
+  <div class="main-content">
+
+    <!-- Universe tabs + view toggle -->
+    <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px;">
+      <div class="universe-tabs" id="universeTabs">
+        <button class="universe-tab active" data-universe="1">Universe 1</button>
+      </div>
+      <div class="view-toggle">
+        <button class="view-btn active" data-view="bars" onclick="setView('bars')">Bars</button>
+        <button class="view-btn" data-view="numbers" onclick="setView('numbers')">Numbers</button>
+      </div>
+    </div>
+
+    <!-- DMX visualization -->
+    <div class="dmx-grid-wrapper">
+      <div class="dmx-grid-header">
+        <h2>DMX Channels — <span id="dmxUniverseLabel">Universe 1</span></h2>
+        <span style="font-family: var(--font-mono); font-size: 12px; color: var(--text-muted);" id="dmxActiveCount">0 active</span>
+      </div>
+      <div class="dmx-grid-body" id="dmxGridBody">
+        <!-- Filled by JS -->
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Tooltip -->
+<div class="channel-tooltip" id="channelTooltip"></div>
+
+<script>
+// ─── State ────────────────────────────────────────────────────────
+let ws = null;
+let wsConnected = false;
+let currentUniverse = 1;
+let currentView = 'bars';
+let dmxData = {};     // { universe: [512 values] }
+let lastStats = null;
+let channelElements = []; // cached DOM refs
+
+// ─── Init ─────────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', () => {
+  buildChannelGrid();
+  connectWebSocket();
+  fetchStatus();  // initial state
+});
+
+// ─── WebSocket ────────────────────────────────────────────────────
+function connectWebSocket() {
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  ws = new WebSocket(`${proto}://${location.host}/ws/live`);
+
+  ws.onopen = () => {
+    wsConnected = true;
+    document.getElementById('wsDot').classList.add('connected');
+    document.getElementById('wsDot').title = 'WebSocket connected';
+    addLog('WebSocket connected', 'ok');
+  };
+
+  ws.onclose = () => {
+    wsConnected = false;
+    document.getElementById('wsDot').classList.remove('connected');
+    document.getElementById('wsDot').title = 'WebSocket disconnected';
+    addLog('WebSocket disconnected — reconnecting...', 'warn');
+    setTimeout(connectWebSocket, 2000);
+  };
+
+  ws.onerror = () => {
+    ws.close();
+  };
+
+  ws.onmessage = (evt) => {
+    try {
+      const msg = JSON.parse(evt.data);
+      if (msg.type === 'dmx') {
+        // msg.dmx is { "1": [512 values], ... } (keys are strings from JSON)
+        for (const [u, values] of Object.entries(msg.dmx)) {
+          dmxData[parseInt(u)] = values;
+        }
+        if (msg.stats) {
+          lastStats = msg.stats;
+          updateStatusUI(msg.stats);
+        }
+        renderDMX();
+      }
+    } catch (e) {
+      console.error('WS parse error', e);
+    }
+  };
+}
+
+// ─── REST API calls ───────────────────────────────────────────────
+async function fetchStatus() {
+  try {
+    const resp = await fetch('/api/status');
+    const data = await resp.json();
+    lastStats = data;
+    updateStatusUI(data);
+    if (data.config) populateConfigUI(data.config);
+  } catch (e) {
+    addLog('Failed to fetch status: ' + e.message, 'error');
+  }
+}
+
+async function startBridge() {
+  try {
+    const resp = await fetch('/api/bridge/start', { method: 'POST' });
+    const data = await resp.json();
+    if (data.error) throw new Error(data.error);
+    addLog('Bridge started', 'ok');
+    fetchStatus();
+  } catch (e) {
+    addLog('Start failed: ' + e.message, 'error');
+  }
+}
+
+async function stopBridge() {
+  try {
+    const resp = await fetch('/api/bridge/stop', { method: 'POST' });
+    const data = await resp.json();
+    if (data.error) throw new Error(data.error);
+    addLog('Bridge stopped', 'warn');
+    fetchStatus();
+  } catch (e) {
+    addLog('Stop failed: ' + e.message, 'error');
+  }
+}
+
+async function applyConfig() {
+  const universes = document.getElementById('cfgUniverses').value
+    .split(',').map(s => parseInt(s.trim())).filter(n => !isNaN(n) && n > 0);
+
+  if (universes.length === 0) {
+    addLog('Invalid universes input', 'error');
+    return;
+  }
+
+  const config = {
+    ndi_source_name: document.getElementById('cfgName').value,
+    universes: universes,
+    frame_rate: parseInt(document.getElementById('cfgFps').value) || 30,
+    encoding_mode: document.getElementById('cfgEncoding').value,
+    use_multicast: document.getElementById('cfgMulticast').checked,
+    use_mock_ndi: document.getElementById('cfgMock').checked,
+  };
+
+  try {
+    const resp = await fetch('/api/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(config),
+    });
+    const data = await resp.json();
+    if (data.error) throw new Error(data.error);
+    addLog('Configuration applied' + (data.running ? ' (bridge restarted)' : ''), 'ok');
+
+    // Rebuild tabs for new universes
+    buildUniverseTabs(universes);
+    if (!universes.includes(currentUniverse)) {
+      currentUniverse = universes[0];
+    }
+    buildChannelGrid();
+    fetchStatus();
+  } catch (e) {
+    addLog('Config failed: ' + e.message, 'error');
+  }
+}
+
+// ─── UI Updates ───────────────────────────────────────────────────
+function updateStatusUI(stats) {
+  const running = stats.running;
+
+  // Bridge badge
+  const bb = document.getElementById('bridgeBadge');
+  const bbt = document.getElementById('bridgeBadgeText');
+  bb.className = 'badge ' + (running ? 'badge-green' : 'badge-red');
+  bbt.textContent = running ? 'Running' : 'Stopped';
+
+  // Buttons
+  document.getElementById('btnStart').disabled = running;
+  document.getElementById('btnStop').disabled = !running;
+
+  // Stats
+  document.getElementById('statUptime').textContent = running ? formatUptime(stats.uptime_s) : '—';
+  document.getElementById('statFrames').textContent = running ? stats.frame_count.toLocaleString() : '—';
+
+  // NDI
+  const ndiStats = stats.ndi || {};
+  document.getElementById('statNdiConn').textContent = ndiStats.num_connections ?? '—';
+  const nb = document.getElementById('ndiBadge');
+  const nbt = document.getElementById('ndiBadgeText');
+  if (ndiStats.running) {
+    const n = ndiStats.num_connections || 0;
+    nb.className = 'badge ' + (n > 0 ? 'badge-green' : 'badge-yellow');
+    nbt.textContent = n > 0 ? n + ' conn' : 'No receivers';
+  } else {
+    nb.className = 'badge badge-red';
+    nbt.textContent = 'Off';
+  }
+
+  // sACN
+  const sacnStats = stats.sacn || {};
+  const sacnUniverses = sacnStats.universes || {};
+  let anyReceiving = false;
+  let sacnHTML = '';
+
+  for (const [u, us] of Object.entries(sacnUniverses)) {
+    const receiving = us.receiving;
+    if (receiving) anyReceiving = true;
+    const ageText = us.last_packet_age_s !== null ? us.last_packet_age_s + 's ago' : 'never';
+    sacnHTML += `
+      <div class="stat-row">
+        <span class="stat-label">Universe ${u}</span>
+        <span class="stat-value" style="color: ${receiving ? 'var(--green)' : 'var(--text-muted)'}">
+          ${receiving ? '● ' + us.packet_count.toLocaleString() + ' pkts' : '○ ' + ageText}
+        </span>
+      </div>`;
+  }
+
+  document.getElementById('sacnStatusBody').innerHTML = sacnHTML || '<p style="color:var(--text-muted);font-size:13px;">No universes</p>';
+
+  const sb = document.getElementById('sacnBadge');
+  const sbt = document.getElementById('sacnBadgeText');
+  if (anyReceiving) {
+    sb.className = 'badge badge-green';
+    sbt.textContent = 'Receiving';
+  } else if (running) {
+    sb.className = 'badge badge-yellow';
+    sbt.textContent = 'Waiting';
+  } else {
+    sb.className = 'badge badge-red';
+    sbt.textContent = 'No data';
+  }
+}
+
+function populateConfigUI(cfg) {
+  document.getElementById('cfgName').value = cfg.ndi_source_name || '';
+  document.getElementById('cfgUniverses').value = (cfg.universes || [1]).join(', ');
+  document.getElementById('cfgFps').value = cfg.frame_rate || 30;
+  document.getElementById('cfgEncoding').value = cfg.encoding_mode || 'video';
+  document.getElementById('cfgMulticast').checked = cfg.use_multicast !== false;
+  document.getElementById('cfgMock').checked = cfg.use_mock_ndi === true;
+
+  // Build tabs
+  buildUniverseTabs(cfg.universes || [1]);
+}
+
+// ─── Universe Tabs ────────────────────────────────────────────────
+function buildUniverseTabs(universes) {
+  const container = document.getElementById('universeTabs');
+  container.innerHTML = '';
+  universes.forEach(u => {
+    const btn = document.createElement('button');
+    btn.className = 'universe-tab' + (u === currentUniverse ? ' active' : '');
+    btn.dataset.universe = u;
+    btn.textContent = 'Universe ' + u;
+    btn.onclick = () => selectUniverse(u);
+    container.appendChild(btn);
+  });
+}
+
+function selectUniverse(u) {
+  currentUniverse = u;
+  document.querySelectorAll('.universe-tab').forEach(t => {
+    t.classList.toggle('active', parseInt(t.dataset.universe) === u);
+  });
+  document.getElementById('dmxUniverseLabel').textContent = 'Universe ' + u;
+  renderDMX();
+}
+
+// ─── DMX Visualization ───────────────────────────────────────────
+function buildChannelGrid() {
+  const body = document.getElementById('dmxGridBody');
+  body.innerHTML = '';
+  channelElements = [];
+
+  if (currentView === 'bars') {
+    const grid = document.createElement('div');
+    grid.className = 'channel-grid';
+
+    for (let i = 0; i < 512; i++) {
+      const bar = document.createElement('div');
+      bar.className = 'channel-bar';
+      bar.dataset.ch = i;
+
+      const track = document.createElement('div');
+      track.className = 'channel-bar-track';
+
+      const fill = document.createElement('div');
+      fill.className = 'channel-bar-fill';
+      fill.style.height = '0%';
+      track.appendChild(fill);
+
+      const num = document.createElement('div');
+      num.className = 'channel-num';
+      // Show label every 8 channels, or first/last
+      num.textContent = (i % 16 === 0 || i === 511) ? (i + 1) : '';
+
+      bar.appendChild(track);
+      bar.appendChild(num);
+
+      bar.addEventListener('mouseenter', (e) => showTooltip(e, i));
+      bar.addEventListener('mouseleave', hideTooltip);
+
+      grid.appendChild(bar);
+      channelElements.push(fill);
+    }
+    body.appendChild(grid);
+  } else {
+    // Numbers view
+    const table = document.createElement('div');
+    table.style.cssText = 'display:grid; grid-template-columns:repeat(16, 1fr); gap:2px; font-family:var(--font-mono); font-size:11px;';
+
+    for (let i = 0; i < 512; i++) {
+      const cell = document.createElement('div');
+      cell.style.cssText = 'padding:4px 2px; text-align:center; background:var(--bg-primary); border-radius:3px; color:var(--text-muted);';
+      cell.title = 'Ch ' + (i + 1);
+      cell.textContent = '0';
+      table.appendChild(cell);
+      channelElements.push(cell);
+    }
+    body.appendChild(table);
+  }
+}
+
+function renderDMX() {
+  const values = dmxData[currentUniverse];
+  if (!values || channelElements.length === 0) return;
+
+  let activeCount = 0;
+
+  if (currentView === 'bars') {
+    for (let i = 0; i < 512 && i < values.length; i++) {
+      const v = values[i];
+      const pct = (v / 255) * 100;
+      const el = channelElements[i];
+      el.style.height = pct + '%';
+
+      // Color based on intensity
+      el.className = 'channel-bar-fill';
+      if (v === 255) el.classList.add('full');
+      else if (v > 200) el.classList.add('hot');
+      else if (v > 0) el.classList.add('active');
+
+      if (v > 0) activeCount++;
+    }
+  } else {
+    for (let i = 0; i < 512 && i < values.length; i++) {
+      const v = values[i];
+      const el = channelElements[i];
+      el.textContent = v;
+      if (v > 0) {
+        activeCount++;
+        const intensity = Math.round((v / 255) * 100);
+        el.style.color = v === 255 ? 'var(--red)' : v > 200 ? 'var(--orange)' : 'var(--green)';
+        el.style.background = `rgba(108, 140, 255, ${v / 255 * 0.15})`;
+      } else {
+        el.style.color = 'var(--text-muted)';
+        el.style.background = 'var(--bg-primary)';
+      }
+    }
+  }
+
+  document.getElementById('dmxActiveCount').textContent = activeCount + ' active';
+}
+
+function setView(view) {
+  currentView = view;
+  document.querySelectorAll('.view-btn').forEach(b => {
+    b.classList.toggle('active', b.dataset.view === view);
+  });
+  buildChannelGrid();
+  renderDMX();
+}
+
+// ─── Tooltip ──────────────────────────────────────────────────────
+function showTooltip(e, channelIndex) {
+  const values = dmxData[currentUniverse];
+  const v = values ? values[channelIndex] : 0;
+  const pct = Math.round((v / 255) * 100);
+  const tip = document.getElementById('channelTooltip');
+  tip.innerHTML = `<strong>Ch ${channelIndex + 1}</strong><br>Value: ${v} (${pct}%)`;
+  tip.classList.add('visible');
+
+  const rect = e.target.getBoundingClientRect();
+  tip.style.left = rect.left + 'px';
+  tip.style.top = (rect.top - 50) + 'px';
+}
+
+function hideTooltip() {
+  document.getElementById('channelTooltip').classList.remove('visible');
+}
+
+// ─── Log ──────────────────────────────────────────────────────────
+function addLog(msg, level) {
+  const body = document.getElementById('logBody');
+  const ts = new Date().toLocaleTimeString();
+  const cls = level === 'error' ? 'log-entry-error' : level === 'warn' ? 'log-entry-warn' : level === 'ok' ? 'log-entry-ok' : '';
+  body.innerHTML += `<div class="${cls}">[${ts}] ${msg}</div>`;
+  body.scrollTop = body.scrollHeight;
+
+  // Keep max 200 entries
+  while (body.children.length > 200) body.removeChild(body.firstChild);
+}
+
+function clearLog() {
+  document.getElementById('logBody').innerHTML = '';
+}
+
+// ─── Helpers ──────────────────────────────────────────────────────
+function formatUptime(seconds) {
+  if (!seconds) return '—';
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = Math.floor(seconds % 60);
+  if (h > 0) return `${h}h ${m}m ${s}s`;
+  if (m > 0) return `${m}m ${s}s`;
+  return `${s}s`;
+}
+</script>
+</body>
+</html>

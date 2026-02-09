@@ -1,0 +1,246 @@
+"""
+Web Server Module
+
+Provides a FastAPI-based web UI and API for monitoring and controlling
+the sACN to NDI bridge.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+import time
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Callable
+
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi.responses import HTMLResponse, JSONResponse
+
+if TYPE_CHECKING:
+    from main import SACNtoNDIBridge
+
+logger = logging.getLogger(__name__)
+
+
+class BridgeWebServer:
+    """
+    Web server providing GUI and API for the sACN-to-NDI bridge.
+
+    Exposes:
+    - GET  /              -> HTML GUI
+    - GET  /api/status    -> bridge status + stats
+    - GET  /api/dmx       -> current DMX values (all universes)
+    - GET  /api/dmx/{u}   -> current DMX values for universe u
+    - POST /api/bridge/start  -> start the bridge
+    - POST /api/bridge/stop   -> stop the bridge
+    - POST /api/config        -> update configuration
+    - WS   /ws/live           -> live DMX data stream
+    """
+
+    def __init__(self) -> None:
+        self._app = FastAPI(
+            title="sACN to NDI Bridge",
+            version="0.1.0",
+        )
+        self._bridge: SACNtoNDIBridge | None = None
+        self._bridge_factory: Callable[..., SACNtoNDIBridge] | None = None
+        self._ws_clients: list[WebSocket] = []
+
+        self._setup_routes()
+
+    @property
+    def app(self) -> FastAPI:
+        """Get the FastAPI application instance."""
+        return self._app
+
+    def set_bridge(self, bridge: SACNtoNDIBridge) -> None:
+        """Set the bridge instance to monitor/control."""
+        self._bridge = bridge
+
+    def set_bridge_factory(
+        self, factory: Callable[..., SACNtoNDIBridge]
+    ) -> None:
+        """Set factory callable for creating bridges from config."""
+        self._bridge_factory = factory
+
+    def _setup_routes(self) -> None:  # noqa: C901
+        """Register all API routes."""
+
+        @self._app.get("/", response_class=HTMLResponse)
+        async def index() -> HTMLResponse:
+            html_path = (
+                Path(__file__).parent / "static" / "index.html"
+            )
+            return HTMLResponse(content=html_path.read_text())
+
+        @self._app.get("/api/status")
+        async def get_status() -> JSONResponse:
+            if self._bridge is None:
+                return JSONResponse(
+                    {"running": False, "error": "No bridge configured"}
+                )
+            return JSONResponse(self._bridge.get_stats())
+
+        @self._app.get("/api/dmx")
+        async def get_dmx_all() -> JSONResponse:
+            if self._bridge is None:
+                return JSONResponse(
+                    {"error": "No bridge configured"},
+                    status_code=503,
+                )
+            return JSONResponse(self._bridge.get_dmx_snapshot())
+
+        @self._app.get("/api/dmx/{universe}")
+        async def get_dmx_universe(universe: int) -> JSONResponse:
+            if self._bridge is None:
+                return JSONResponse(
+                    {"error": "No bridge configured"},
+                    status_code=503,
+                )
+            snapshot = self._bridge.get_dmx_snapshot()
+            if universe not in snapshot:
+                return JSONResponse(
+                    {"error": f"Universe {universe} not found"},
+                    status_code=404,
+                )
+            return JSONResponse({universe: snapshot[universe]})
+
+        @self._app.post("/api/bridge/start")
+        async def start_bridge() -> JSONResponse:
+            if self._bridge is None:
+                return JSONResponse(
+                    {"error": "No bridge configured"},
+                    status_code=503,
+                )
+            if self._bridge.is_running:
+                return JSONResponse({"status": "already_running"})
+            try:
+                self._bridge.start()
+                return JSONResponse({"status": "started"})
+            except Exception as exc:
+                return JSONResponse(
+                    {"error": str(exc)}, status_code=500
+                )
+
+        @self._app.post("/api/bridge/stop")
+        async def stop_bridge() -> JSONResponse:
+            if self._bridge is None:
+                return JSONResponse(
+                    {"error": "No bridge configured"},
+                    status_code=503,
+                )
+            if not self._bridge.is_running:
+                return JSONResponse({"status": "already_stopped"})
+            try:
+                self._bridge.stop()
+                return JSONResponse({"status": "stopped"})
+            except Exception as exc:
+                return JSONResponse(
+                    {"error": str(exc)}, status_code=500
+                )
+
+        @self._app.post("/api/config")
+        async def update_config(
+            new_config: dict[str, Any],
+        ) -> JSONResponse:
+            """Update bridge config. Stops/restarts as needed."""
+            if (
+                self._bridge is None
+                or self._bridge_factory is None
+            ):
+                return JSONResponse(
+                    {"error": "No bridge or factory configured"},
+                    status_code=503,
+                )
+
+            from main import BridgeConfig, EncodingMode
+
+            was_running = self._bridge.is_running
+            if was_running:
+                self._bridge.stop()
+
+            current = self._bridge.config
+            try:
+                enc_mode = new_config.get(
+                    "encoding_mode",
+                    current.encoding_mode.value,
+                )
+                config = BridgeConfig(
+                    universes=sorted(
+                        new_config.get("universes", current.universes)
+                    ),
+                    ndi_source_name=new_config.get(
+                        "ndi_source_name",
+                        current.ndi_source_name,
+                    ),
+                    frame_rate=int(
+                        new_config.get(
+                            "frame_rate", current.frame_rate
+                        )
+                    ),
+                    encoding_mode=EncodingMode(enc_mode),
+                    use_multicast=new_config.get(
+                        "use_multicast", current.use_multicast
+                    ),
+                    bind_address=new_config.get(
+                        "bind_address", current.bind_address
+                    ),
+                    use_mock_ndi=new_config.get(
+                        "use_mock_ndi", current.use_mock_ndi
+                    ),
+                )
+            except (ValueError, TypeError) as exc:
+                return JSONResponse(
+                    {"error": f"Invalid config: {exc}"},
+                    status_code=400,
+                )
+
+            self._bridge = self._bridge_factory(config)
+
+            if was_running:
+                try:
+                    self._bridge.start()
+                except Exception as exc:
+                    return JSONResponse(
+                        {"error": f"Failed to restart: {exc}"},
+                        status_code=500,
+                    )
+
+            resp_config = {
+                "universes": config.universes,
+                "ndi_source_name": config.ndi_source_name,
+                "frame_rate": config.frame_rate,
+                "encoding_mode": config.encoding_mode.value,
+                "use_multicast": config.use_multicast,
+                "bind_address": config.bind_address,
+                "use_mock_ndi": config.use_mock_ndi,
+            }
+            return JSONResponse({
+                "status": "reconfigured",
+                "running": self._bridge.is_running,
+                "config": resp_config,
+            })
+
+        @self._app.websocket("/ws/live")
+        async def ws_live(ws: WebSocket) -> None:
+            await ws.accept()
+            self._ws_clients.append(ws)
+            try:
+                while True:
+                    if self._bridge is not None:
+                        payload = {
+                            "type": "dmx",
+                            "ts": time.time(),
+                            "dmx": self._bridge.get_dmx_snapshot(),
+                            "stats": self._bridge.get_stats(),
+                        }
+                        await ws.send_text(json.dumps(payload))
+                    await asyncio.sleep(0.1)
+            except WebSocketDisconnect:
+                pass
+            except Exception:
+                logger.debug("WebSocket error", exc_info=True)
+            finally:
+                if ws in self._ws_clients:
+                    self._ws_clients.remove(ws)
