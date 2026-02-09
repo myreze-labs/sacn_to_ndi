@@ -239,7 +239,11 @@ class CyndilibNDISender(NDISenderProtocol):
         """Get number of connected receivers."""
         if self._sender is None:
             return 0
-        return self._sender.get_num_connections()
+        try:
+            # cyndilib requires a timeout_ms argument
+            return self._sender.get_num_connections(0)
+        except TypeError:
+            return 0
 
 
 class MockNDISender(NDISenderProtocol):
