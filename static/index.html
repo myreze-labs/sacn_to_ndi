@@ -502,13 +502,23 @@
             <input type="number" class="form-input" id="cfgNdiHeight" value="128" min="1" max="4096">
           </div>
         </div>
-        <div class="form-group">
-          <label class="form-label">Pixel Format</label>
-          <select class="form-select" id="cfgNdiFourcc">
-            <option value="RGBA" selected>RGBA</option>
-            <option value="BGRX">BGRX</option>
-            <option value="BGRA">BGRA</option>
-          </select>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+          <div class="form-group">
+            <label class="form-label">Pixel Format</label>
+            <select class="form-select" id="cfgNdiFourcc">
+              <option value="BGRX" selected>BGRX</option>
+              <option value="BGRA">BGRA</option>
+              <option value="RGBA">RGBA</option>
+              <option value="RGBX">RGBX</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Channel Depth</label>
+            <select class="form-select" id="cfgChannelDepth">
+              <option value="grayscale" selected>Grayscale (1 ch/px)</option>
+              <option value="rgb">RGB packed (3 ch/px)</option>
+            </select>
+          </div>
         </div>
         <div class="toggle-row">
           <span class="toggle-label">Multicast</span>
@@ -692,6 +702,7 @@ async function applyConfig() {
     ndi_width: parseInt(document.getElementById('cfgNdiWidth').value) || 128,
     ndi_height: parseInt(document.getElementById('cfgNdiHeight').value) || 128,
     ndi_fourcc: document.getElementById('cfgNdiFourcc').value,
+    ndi_channel_depth: document.getElementById('cfgChannelDepth').value,
   };
 
   try {
@@ -737,7 +748,8 @@ function updateStatusUI(stats) {
   // NDI output resolution
   const cfg = stats.config || {};
   if (running && cfg.ndi_width) {
-    document.getElementById('statNdiRes').textContent = cfg.ndi_width + 'x' + cfg.ndi_height + ' ' + (cfg.ndi_fourcc || 'RGBA');
+    const depth = cfg.ndi_channel_depth === 'rgb' ? 'RGB' : 'Gray';
+    document.getElementById('statNdiRes').textContent = cfg.ndi_width + 'x' + cfg.ndi_height + ' ' + (cfg.ndi_fourcc || 'BGRX') + ' ' + depth;
   } else {
     document.getElementById('statNdiRes').textContent = '—';
   }
@@ -800,7 +812,8 @@ function populateConfigUI(cfg) {
   document.getElementById('cfgMock').checked = cfg.use_mock_ndi === true;
   document.getElementById('cfgNdiWidth').value = cfg.ndi_width || 128;
   document.getElementById('cfgNdiHeight').value = cfg.ndi_height || 128;
-  document.getElementById('cfgNdiFourcc').value = cfg.ndi_fourcc || 'RGBA';
+  document.getElementById('cfgNdiFourcc').value = cfg.ndi_fourcc || 'BGRX';
+  document.getElementById('cfgChannelDepth').value = cfg.ndi_channel_depth || 'grayscale';
 
   // Build tabs
   buildUniverseTabs(cfg.universes || [1]);

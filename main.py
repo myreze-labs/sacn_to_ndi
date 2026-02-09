@@ -41,7 +41,8 @@ class BridgeConfig:
     use_mock_ndi: bool = False  # For testing without NDI SDK
     ndi_width: int = 512        # NDI output frame width
     ndi_height: int = 1         # NDI output frame height (1 = raw, >1 = resized)
-    ndi_fourcc: str = "RGBA"    # Pixel format: RGBA, BGRX, BGRA
+    ndi_fourcc: str = "BGRX"    # Pixel format: BGRX, BGRA, RGBA, RGBX
+    ndi_channel_depth: str = "grayscale"  # "grayscale" (R=G=B=DMX, 1ch/px) or "rgb" (R,G,B=3 DMX ch/px)
 
 
 class SACNtoNDIBridge:
@@ -78,6 +79,7 @@ class SACNtoNDIBridge:
             width=config.ndi_width,
             height=config.ndi_height,
             fourcc=config.ndi_fourcc,
+            channel_depth=config.ndi_channel_depth,
         )
         
         # Initialize sender with the configured resolution and format
@@ -104,7 +106,7 @@ class SACNtoNDIBridge:
         print(f"  NDI Source: {self._config.ndi_source_name}")
         print(f"  Frame Rate: {self._config.frame_rate} fps")
         print(f"  Encoding: {self._config.encoding_mode.value}")
-        print(f"  NDI Output: {self._config.ndi_width}x{self._config.ndi_height} {self._config.ndi_fourcc}")
+        print(f"  NDI Output: {self._config.ndi_width}x{self._config.ndi_height} {self._config.ndi_fourcc} ({self._config.ndi_channel_depth})")
         print(f"  Multicast: {self._config.use_multicast}")
         
         # Start components
@@ -224,6 +226,7 @@ class SACNtoNDIBridge:
                 "ndi_width": self._config.ndi_width,
                 "ndi_height": self._config.ndi_height,
                 "ndi_fourcc": self._config.ndi_fourcc,
+                "ndi_channel_depth": self._config.ndi_channel_depth,
             },
             "sacn": self._receiver.get_stats(),
             "ndi": {
@@ -348,9 +351,17 @@ Examples:
     parser.add_argument(
         "--fourcc",
         type=str,
-        choices=["RGBA", "BGRX", "BGRA"],
-        default="RGBA",
-        help="NDI pixel format (default: RGBA)"
+        choices=["BGRX", "BGRA", "RGBA", "RGBX"],
+        default="BGRX",
+        help="NDI pixel format (default: BGRX)"
+    )
+    
+    parser.add_argument(
+        "--channel-depth",
+        type=str,
+        choices=["grayscale", "rgb"],
+        default="grayscale",
+        help="Channel packing: grayscale (R=G=B=DMX, 1ch/px) or rgb (R,G,B=3 DMX ch/px)"
     )
     
     parser.add_argument(
@@ -396,6 +407,7 @@ def main() -> int:
         ndi_width=ndi_width,
         ndi_height=ndi_height,
         ndi_fourcc=args.fourcc,
+        ndi_channel_depth=args.channel_depth,
     )
     
     # Create bridge

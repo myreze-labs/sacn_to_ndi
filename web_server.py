@@ -217,6 +217,10 @@ class BridgeWebServer:
                     ndi_fourcc=new_config.get(
                         "ndi_fourcc", current.ndi_fourcc
                     ),
+                    ndi_channel_depth=new_config.get(
+                        "ndi_channel_depth",
+                        current.ndi_channel_depth,
+                    ),
                 )
             except (ValueError, TypeError) as exc:
                 return JSONResponse(
@@ -246,6 +250,7 @@ class BridgeWebServer:
                 "ndi_width": config.ndi_width,
                 "ndi_height": config.ndi_height,
                 "ndi_fourcc": config.ndi_fourcc,
+                "ndi_channel_depth": config.ndi_channel_depth,
             }
             return JSONResponse({
                 "status": "reconfigured",

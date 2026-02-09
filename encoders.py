@@ -225,36 +225,59 @@ class ResizableEncoder(DMXEncoder):
     reshapes/tiles it into the target resolution and pixel format.
     
     DMX channel values are laid out left-to-right, top-to-bottom.
-    All channels of a pixel carry the same DMX value (grayscale).
+    
+    Channel depth modes:
+      - "grayscale": R=G=B=DMX value per pixel (1 DMX ch/pixel)
+      - "rgb": R, G, B each carry a separate DMX channel (3 DMX ch/pixel)
+    
     Unused pixels are black with full alpha.
     """
+    
+    VALID_CHANNEL_DEPTHS = ("grayscale", "rgb")
     
     def __init__(
         self,
         inner: DMXEncoder,
         width: int = 128,
         height: int = 128,
-        fourcc: str = "RGBA",
+        fourcc: str = "BGRX",
+        channel_depth: str = "grayscale",
     ):
         self._inner = inner
         self._width = width
         self._height = height
         self._fourcc = fourcc
         
-        # Pre-allocate output buffer
+        if channel_depth not in self.VALID_CHANNEL_DEPTHS:
+            raise ValueError(
+                f"Invalid channel_depth '{channel_depth}', "
+                f"expected one of {self.VALID_CHANNEL_DEPTHS}"
+            )
+        self._channel_depth = channel_depth
+        
+        # Pre-allocate output buffer (always 4 bytes per pixel for NDI)
         self._frame_buffer = np.zeros(
             (self._height, self._width, 4), dtype=np.uint8
         )
     
+    @property
+    def channel_depth(self) -> str:
+        return self._channel_depth
+    
+    def _channels_per_pixel(self) -> int:
+        """How many DMX channels are packed into each pixel."""
+        return 3 if self._channel_depth == "rgb" else 1
+    
     def encode_video(self, dmx_data: DMXData | list[DMXData]) -> EncodedFrame:
         """
-        Encode DMX data into a WxH RGBA/BGRX frame.
+        Encode DMX data into a WxH video frame.
         
-        512 DMX channels are mapped into the pixel grid
-        left-to-right, top-to-bottom. Each pixel's RGB channels
-        carry the DMX value; alpha is always 255.
+        In grayscale mode: each pixel R=G=B=DMX[i] (1 DMX channel per pixel).
+        In RGB mode: each pixel R=DMX[i], G=DMX[i+1], B=DMX[i+2] (3 per pixel).
+        
+        Alpha/X byte is always 255.
         """
-        # Get raw DMX values from the inner encoder's data path
+        # Get raw DMX values
         if isinstance(dmx_data, list):
             all_bytes = bytearray()
             for d in dmx_data:
@@ -262,35 +285,70 @@ class ResizableEncoder(DMXEncoder):
         else:
             all_bytes = dmx_data.data
         
-        total_pixels = self._width * self._height
         dmx_array = np.frombuffer(all_bytes, dtype=np.uint8)
+        num_dmx = len(dmx_array)
+        total_pixels = self._width * self._height
         
-        # Clear buffer
+        # Clear buffer and set alpha
         self._frame_buffer.fill(0)
-        # Alpha channel always 255
         self._frame_buffer[:, :, 3] = 255
         
-        # Map DMX channels to pixels (fill what we have)
-        num_channels = min(len(dmx_array), total_pixels)
+        is_bgr = self._fourcc in ("BGRX", "BGRA")
         
-        if self._fourcc in ("RGBA", "RGBX"):
-            # R=DMX, G=DMX, B=DMX, A=255
-            for i in range(num_channels):
+        if self._channel_depth == "rgb":
+            # Pack 3 DMX channels per pixel: R, G, B each carry a
+            # separate DMX value. This is 3x more efficient.
+            num_pixels = min(num_dmx // 3, total_pixels)
+            remainder = num_dmx % 3 if num_pixels < total_pixels else 0
+            
+            for i in range(num_pixels):
                 row = i // self._width
                 col = i % self._width
-                v = dmx_array[i]
-                self._frame_buffer[row, col, 0] = v  # R
-                self._frame_buffer[row, col, 1] = v  # G
-                self._frame_buffer[row, col, 2] = v  # B
+                di = i * 3  # DMX index
+                if is_bgr:
+                    self._frame_buffer[row, col, 0] = dmx_array[di + 2]  # B = ch[i+2]
+                    self._frame_buffer[row, col, 1] = dmx_array[di + 1]  # G = ch[i+1]
+                    self._frame_buffer[row, col, 2] = dmx_array[di]      # R = ch[i]
+                else:
+                    self._frame_buffer[row, col, 0] = dmx_array[di]      # R = ch[i]
+                    self._frame_buffer[row, col, 1] = dmx_array[di + 1]  # G = ch[i+1]
+                    self._frame_buffer[row, col, 2] = dmx_array[di + 2]  # B = ch[i+2]
+            
+            # Handle leftover channels (1 or 2 remaining)
+            if remainder > 0 and num_pixels < total_pixels:
+                row = num_pixels // self._width
+                col = num_pixels % self._width
+                di = num_pixels * 3
+                if is_bgr:
+                    if remainder >= 1:
+                        self._frame_buffer[row, col, 2] = dmx_array[di]      # R
+                    if remainder >= 2:
+                        self._frame_buffer[row, col, 1] = dmx_array[di + 1]  # G
+                else:
+                    if remainder >= 1:
+                        self._frame_buffer[row, col, 0] = dmx_array[di]      # R
+                    if remainder >= 2:
+                        self._frame_buffer[row, col, 1] = dmx_array[di + 1]  # G
         else:
-            # BGRX/BGRA: B=DMX, G=DMX, R=DMX, X/A=255
-            for i in range(num_channels):
-                row = i // self._width
-                col = i % self._width
-                v = dmx_array[i]
-                self._frame_buffer[row, col, 0] = v  # B
-                self._frame_buffer[row, col, 1] = v  # G
-                self._frame_buffer[row, col, 2] = v  # R
+            # Grayscale: R=G=B=DMX value (1 DMX channel per pixel)
+            num_channels = min(num_dmx, total_pixels)
+            
+            if is_bgr:
+                for i in range(num_channels):
+                    row = i // self._width
+                    col = i % self._width
+                    v = dmx_array[i]
+                    self._frame_buffer[row, col, 0] = v  # B
+                    self._frame_buffer[row, col, 1] = v  # G
+                    self._frame_buffer[row, col, 2] = v  # R
+            else:
+                for i in range(num_channels):
+                    row = i // self._width
+                    col = i % self._width
+                    v = dmx_array[i]
+                    self._frame_buffer[row, col, 0] = v  # R
+                    self._frame_buffer[row, col, 1] = v  # G
+                    self._frame_buffer[row, col, 2] = v  # B
         
         return EncodedFrame(
             data=self._frame_buffer.copy(),
