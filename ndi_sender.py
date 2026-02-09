@@ -76,6 +76,11 @@ class CyndilibNDISender(NDISenderProtocol):
         self._metadata_frame = None
         self._running = False
         self._lock = threading.Lock()
+        
+        # Cache last frame config to avoid unnecessary reconfiguration
+        self._last_width = 0
+        self._last_height = 0
+        self._last_fourcc = None
     
     def start(self) -> None:
         """Initialize and start the NDI sender."""
@@ -88,15 +93,22 @@ class CyndilibNDISender(NDISenderProtocol):
         from cyndilib.video_frame import VideoSendFrame
         from cyndilib.metadata_frame import MetadataSendFrame
         
+        # Create sender instance
         self._sender = Sender(self._config.source_name)
-        self._sender.open()
         
-        # Create video frame object
+        # Create and pre-configure frame objects BEFORE opening sender
         self._video_frame = VideoSendFrame()
+        self._metadata_frame = MetadataSendFrame()
         self._fourcc = FourCC
         
-        # Create metadata frame object
-        self._metadata_frame = MetadataSendFrame()
+        # Pre-configure a default video frame to avoid "no frame objects" error
+        # We'll update this with actual data when sending
+        self._video_frame.set_fourcc(FourCC.BGRX)
+        self._video_frame.set_resolution(512, 1)
+        self._video_frame.set_frame_rate(self._config.frame_rate, 1)
+        
+        # Now open the sender with frames configured
+        self._sender.open()
         
         self._running = True
     
@@ -113,6 +125,11 @@ class CyndilibNDISender(NDISenderProtocol):
             self._video_frame = None
             self._metadata_frame = None
             self._running = False
+            
+            # Reset frame config cache
+            self._last_width = 0
+            self._last_height = 0
+            self._last_fourcc = None
     
     def send_video_frame(self, frame: EncodedFrame) -> None:
         """
@@ -143,15 +160,25 @@ class CyndilibNDISender(NDISenderProtocol):
             if fourcc is None:
                 raise ValueError(f"Unsupported FourCC: {frame.fourcc}")
             
-            # Configure video frame
-            self._video_frame.set_fourcc(fourcc)
-            self._video_frame.set_resolution(frame.width, frame.height)
-            self._video_frame.set_frame_rate(self._config.frame_rate, 1)
+            # Only reconfigure if dimensions or format changed
+            needs_reconfig = (
+                frame.width != self._last_width
+                or frame.height != self._last_height
+                or fourcc != self._last_fourcc
+            )
             
-            # Write frame data
+            if needs_reconfig:
+                self._video_frame.set_fourcc(fourcc)
+                self._video_frame.set_resolution(frame.width, frame.height)
+                self._video_frame.set_frame_rate(
+                    self._config.frame_rate, 1
+                )
+                self._last_width = frame.width
+                self._last_height = frame.height
+                self._last_fourcc = fourcc
+            
+            # Write frame data and send
             self._video_frame.write_data(frame.data)
-            
-            # Send the frame
             self._sender.send_video(self._video_frame)
     
     def send_metadata(self, metadata: EncodedMetadata) -> None:
