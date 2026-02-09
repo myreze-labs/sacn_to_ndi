@@ -251,14 +251,19 @@ class BridgeWebServer:
                                 "dmx": self._bridge.get_dmx_snapshot(),
                                 "stats": self._bridge.get_stats(),
                             }
-                            await ws.send_text(json.dumps(payload))
                         except Exception:
                             logger.error(
                                 "Error building WS payload:\n%s",
                                 traceback.format_exc(),
                             )
+                            await asyncio.sleep(0.1)
+                            continue
+                        # send_text outside the inner try so that
+                        # disconnect exceptions propagate to the outer handler
+                        await ws.send_text(json.dumps(payload))
                     await asyncio.sleep(0.1)
-            except WebSocketDisconnect:
+            except (WebSocketDisconnect, RuntimeError):
+                # Client disconnected -- normal during page refresh
                 pass
             except Exception:
                 logger.debug("WebSocket error", exc_info=True)
