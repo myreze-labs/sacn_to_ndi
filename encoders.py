@@ -217,6 +217,93 @@ class MultiUniverseEncoder(DMXEncoder):
         )
 
 
+class ResizableEncoder(DMXEncoder):
+    """
+    Wraps any DMXEncoder and resizes/reformats its video output.
+    
+    Takes the inner encoder's raw frame (e.g. 512x1 BGRX) and
+    reshapes/tiles it into the target resolution and pixel format.
+    
+    DMX channel values are laid out left-to-right, top-to-bottom.
+    All channels of a pixel carry the same DMX value (grayscale).
+    Unused pixels are black with full alpha.
+    """
+    
+    def __init__(
+        self,
+        inner: DMXEncoder,
+        width: int = 128,
+        height: int = 128,
+        fourcc: str = "RGBA",
+    ):
+        self._inner = inner
+        self._width = width
+        self._height = height
+        self._fourcc = fourcc
+        
+        # Pre-allocate output buffer
+        self._frame_buffer = np.zeros(
+            (self._height, self._width, 4), dtype=np.uint8
+        )
+    
+    def encode_video(self, dmx_data: DMXData | list[DMXData]) -> EncodedFrame:
+        """
+        Encode DMX data into a WxH RGBA/BGRX frame.
+        
+        512 DMX channels are mapped into the pixel grid
+        left-to-right, top-to-bottom. Each pixel's RGB channels
+        carry the DMX value; alpha is always 255.
+        """
+        # Get raw DMX values from the inner encoder's data path
+        if isinstance(dmx_data, list):
+            all_bytes = bytearray()
+            for d in dmx_data:
+                all_bytes.extend(d.data)
+        else:
+            all_bytes = dmx_data.data
+        
+        total_pixels = self._width * self._height
+        dmx_array = np.frombuffer(all_bytes, dtype=np.uint8)
+        
+        # Clear buffer
+        self._frame_buffer.fill(0)
+        # Alpha channel always 255
+        self._frame_buffer[:, :, 3] = 255
+        
+        # Map DMX channels to pixels (fill what we have)
+        num_channels = min(len(dmx_array), total_pixels)
+        
+        if self._fourcc in ("RGBA", "RGBX"):
+            # R=DMX, G=DMX, B=DMX, A=255
+            for i in range(num_channels):
+                row = i // self._width
+                col = i % self._width
+                v = dmx_array[i]
+                self._frame_buffer[row, col, 0] = v  # R
+                self._frame_buffer[row, col, 1] = v  # G
+                self._frame_buffer[row, col, 2] = v  # B
+        else:
+            # BGRX/BGRA: B=DMX, G=DMX, R=DMX, X/A=255
+            for i in range(num_channels):
+                row = i // self._width
+                col = i % self._width
+                v = dmx_array[i]
+                self._frame_buffer[row, col, 0] = v  # B
+                self._frame_buffer[row, col, 1] = v  # G
+                self._frame_buffer[row, col, 2] = v  # R
+        
+        return EncodedFrame(
+            data=self._frame_buffer.copy(),
+            width=self._width,
+            height=self._height,
+            fourcc=self._fourcc,
+        )
+    
+    def encode_metadata(self, dmx_data: DMXData | list[DMXData]) -> EncodedMetadata:
+        """Delegate metadata encoding to inner encoder."""
+        return self._inner.encode_metadata(dmx_data)
+
+
 # Decoder utilities for receiver side
 
 def decode_video_single_universe(frame_data: np.ndarray) -> bytearray:

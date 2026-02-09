@@ -18,7 +18,7 @@ from enum import Enum
 from typing import Callable
 
 from sacn_receiver import SACNReceiver, DMXData
-from encoders import SingleUniverseEncoder, MultiUniverseEncoder, DMXEncoder
+from encoders import SingleUniverseEncoder, MultiUniverseEncoder, ResizableEncoder, DMXEncoder
 from ndi_sender import NDISenderConfig, CyndilibNDISender, MockNDISender, NDISenderProtocol
 
 
@@ -39,6 +39,9 @@ class BridgeConfig:
     use_multicast: bool = True
     bind_address: str = "0.0.0.0"
     use_mock_ndi: bool = False  # For testing without NDI SDK
+    ndi_width: int = 512        # NDI output frame width
+    ndi_height: int = 1         # NDI output frame height (1 = raw, >1 = resized)
+    ndi_fourcc: str = "RGBA"    # Pixel format: RGBA, BGRX, BGRA
 
 
 class SACNtoNDIBridge:
@@ -65,9 +68,17 @@ class SACNtoNDIBridge:
         
         # Initialize encoder based on number of universes
         if len(config.universes) == 1:
-            self._encoder: DMXEncoder = SingleUniverseEncoder()
+            base_encoder: DMXEncoder = SingleUniverseEncoder()
         else:
-            self._encoder = MultiUniverseEncoder(len(config.universes))
+            base_encoder = MultiUniverseEncoder(len(config.universes))
+        
+        # Wrap with resizable encoder for custom NDI output resolution
+        self._encoder: DMXEncoder = ResizableEncoder(
+            inner=base_encoder,
+            width=config.ndi_width,
+            height=config.ndi_height,
+            fourcc=config.ndi_fourcc,
+        )
         
         # Initialize sender
         sender_config = NDISenderConfig(
@@ -90,6 +101,7 @@ class SACNtoNDIBridge:
         print(f"  NDI Source: {self._config.ndi_source_name}")
         print(f"  Frame Rate: {self._config.frame_rate} fps")
         print(f"  Encoding: {self._config.encoding_mode.value}")
+        print(f"  NDI Output: {self._config.ndi_width}x{self._config.ndi_height} {self._config.ndi_fourcc}")
         print(f"  Multicast: {self._config.use_multicast}")
         
         # Start components
@@ -206,6 +218,9 @@ class SACNtoNDIBridge:
                 "use_multicast": self._config.use_multicast,
                 "bind_address": self._config.bind_address,
                 "use_mock_ndi": self._config.use_mock_ndi,
+                "ndi_width": self._config.ndi_width,
+                "ndi_height": self._config.ndi_height,
+                "ndi_fourcc": self._config.ndi_fourcc,
             },
             "sacn": self._receiver.get_stats(),
             "ndi": {
@@ -321,6 +336,21 @@ Examples:
     )
     
     parser.add_argument(
+        "--resolution",
+        type=str,
+        default="512x1",
+        help="NDI output resolution WxH (default: 512x1, e.g. 128x128)"
+    )
+    
+    parser.add_argument(
+        "--fourcc",
+        type=str,
+        choices=["RGBA", "BGRX", "BGRA"],
+        default="RGBA",
+        help="NDI pixel format (default: RGBA)"
+    )
+    
+    parser.add_argument(
         "--no-autostart",
         action="store_true",
         help="With --web: don't start bridge automatically; use the GUI to start"
@@ -342,6 +372,15 @@ def main() -> int:
     else:
         ndi_name = args.name
     
+    # Parse resolution
+    try:
+        res_parts = args.resolution.lower().split("x")
+        ndi_width = int(res_parts[0])
+        ndi_height = int(res_parts[1])
+    except (ValueError, IndexError):
+        print(f"Invalid resolution '{args.resolution}', expected WxH (e.g. 128x128)")
+        return 1
+    
     # Create config
     config = BridgeConfig(
         universes=sorted(args.universes),
@@ -351,6 +390,9 @@ def main() -> int:
         use_multicast=not args.unicast,
         bind_address=args.bind,
         use_mock_ndi=args.mock,
+        ndi_width=ndi_width,
+        ndi_height=ndi_height,
+        ndi_fourcc=args.fourcc,
     )
     
     # Create bridge

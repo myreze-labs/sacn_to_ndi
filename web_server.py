@@ -204,6 +204,19 @@ class BridgeWebServer:
                     use_mock_ndi=new_config.get(
                         "use_mock_ndi", current.use_mock_ndi
                     ),
+                    ndi_width=int(
+                        new_config.get(
+                            "ndi_width", current.ndi_width
+                        )
+                    ),
+                    ndi_height=int(
+                        new_config.get(
+                            "ndi_height", current.ndi_height
+                        )
+                    ),
+                    ndi_fourcc=new_config.get(
+                        "ndi_fourcc", current.ndi_fourcc
+                    ),
                 )
             except (ValueError, TypeError) as exc:
                 return JSONResponse(
@@ -230,6 +243,9 @@ class BridgeWebServer:
                 "use_multicast": config.use_multicast,
                 "bind_address": config.bind_address,
                 "use_mock_ndi": config.use_mock_ndi,
+                "ndi_width": config.ndi_width,
+                "ndi_height": config.ndi_height,
+                "ndi_fourcc": config.ndi_fourcc,
             }
             return JSONResponse({
                 "status": "reconfigured",
@@ -241,8 +257,9 @@ class BridgeWebServer:
         async def ws_live(ws: WebSocket) -> None:
             await ws.accept()
             self._ws_clients.append(ws)
+            connected = True
             try:
-                while True:
+                while connected:
                     if self._bridge is not None:
                         try:
                             payload = {
@@ -258,15 +275,16 @@ class BridgeWebServer:
                             )
                             await asyncio.sleep(0.1)
                             continue
-                        # send_text outside the inner try so that
-                        # disconnect exceptions propagate to the outer handler
-                        await ws.send_text(json.dumps(payload))
+                        try:
+                            await ws.send_text(json.dumps(payload))
+                        except Exception:
+                            # Any send failure means client is gone
+                            connected = False
+                            break
                     await asyncio.sleep(0.1)
-            except (WebSocketDisconnect, RuntimeError):
-                # Client disconnected -- normal during page refresh
-                pass
             except Exception:
-                logger.debug("WebSocket error", exc_info=True)
+                # Catch-all for any disconnect variant
+                pass
             finally:
                 if ws in self._ws_clients:
                     self._ws_clients.remove(ws)

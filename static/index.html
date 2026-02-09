@@ -455,6 +455,10 @@
           <span class="stat-value" id="statFrames">—</span>
         </div>
         <div class="stat-row">
+          <span class="stat-label">NDI output</span>
+          <span class="stat-value" id="statNdiRes">—</span>
+        </div>
+        <div class="stat-row">
           <span class="stat-label">NDI receivers</span>
           <span class="stat-value" id="statNdiConn">—</span>
         </div>
@@ -486,6 +490,24 @@
             <option value="video" selected>Video Frame</option>
             <option value="metadata">Metadata (XML)</option>
             <option value="both">Both</option>
+          </select>
+        </div>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+          <div class="form-group">
+            <label class="form-label">NDI Width</label>
+            <input type="number" class="form-input" id="cfgNdiWidth" value="128" min="2" max="4096" step="2">
+          </div>
+          <div class="form-group">
+            <label class="form-label">NDI Height</label>
+            <input type="number" class="form-input" id="cfgNdiHeight" value="128" min="1" max="4096">
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Pixel Format</label>
+          <select class="form-select" id="cfgNdiFourcc">
+            <option value="RGBA" selected>RGBA</option>
+            <option value="BGRX">BGRX</option>
+            <option value="BGRA">BGRA</option>
           </select>
         </div>
         <div class="toggle-row">
@@ -667,6 +689,9 @@ async function applyConfig() {
     encoding_mode: document.getElementById('cfgEncoding').value,
     use_multicast: document.getElementById('cfgMulticast').checked,
     use_mock_ndi: document.getElementById('cfgMock').checked,
+    ndi_width: parseInt(document.getElementById('cfgNdiWidth').value) || 128,
+    ndi_height: parseInt(document.getElementById('cfgNdiHeight').value) || 128,
+    ndi_fourcc: document.getElementById('cfgNdiFourcc').value,
   };
 
   try {
@@ -708,6 +733,14 @@ function updateStatusUI(stats) {
   // Stats
   document.getElementById('statUptime').textContent = running ? formatUptime(stats.uptime_s) : '—';
   document.getElementById('statFrames').textContent = running ? stats.frame_count.toLocaleString() : '—';
+
+  // NDI output resolution
+  const cfg = stats.config || {};
+  if (running && cfg.ndi_width) {
+    document.getElementById('statNdiRes').textContent = cfg.ndi_width + 'x' + cfg.ndi_height + ' ' + (cfg.ndi_fourcc || 'RGBA');
+  } else {
+    document.getElementById('statNdiRes').textContent = '—';
+  }
 
   // NDI
   const ndiStats = stats.ndi || {};
@@ -765,6 +798,9 @@ function populateConfigUI(cfg) {
   document.getElementById('cfgEncoding').value = cfg.encoding_mode || 'video';
   document.getElementById('cfgMulticast').checked = cfg.use_multicast !== false;
   document.getElementById('cfgMock').checked = cfg.use_mock_ndi === true;
+  document.getElementById('cfgNdiWidth').value = cfg.ndi_width || 128;
+  document.getElementById('cfgNdiHeight').value = cfg.ndi_height || 128;
+  document.getElementById('cfgNdiFourcc').value = cfg.ndi_fourcc || 'RGBA';
 
   // Build tabs
   buildUniverseTabs(cfg.universes || [1]);
